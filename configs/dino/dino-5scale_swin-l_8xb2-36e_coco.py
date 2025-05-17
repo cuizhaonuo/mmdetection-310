@@ -1,5 +1,6 @@
 _base_ = './dino-5scale_swin-l_8xb2-12e_coco.py'
-max_epochs = 36
+
+max_epochs = 50
 train_cfg = dict(
     type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=1)
 param_scheduler = [
@@ -11,3 +12,4 @@ param_scheduler = [
         milestones=[27, 33],
         gamma=0.1)
 ]
+auto_scale_lr = dict(base_batch_size=8)
