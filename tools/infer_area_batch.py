@@ -87,6 +87,7 @@ if __name__ == '__main__':
     input_dir = '/public/home/zncui/pycharm_project/mmdetection/tmp'
     output_dir_root = '/public/home/zncui/pycharm_project/mmdetection/tmp_result'
     # aaaaaaaaaaaa
+    # ............
     # 使用 GPU:1
     model = init_detector(config_file, checkpoint_file, device='cuda:1')
 
