@@ -84,9 +84,9 @@ if __name__ == '__main__':
     config_file = os.path.join(base_dir,
                                'work_dirs/co_dino_5scale_swin_l_16xb1_16e_o365tococo/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py')
     checkpoint_file = os.path.join(base_dir, 'work_dirs/co_dino_5scale_swin_l_16xb1_16e_o365tococo/epoch_16.pth')
-    input_dir = '/public/lab_share/nfs_field/level_1/DJI/P1/zhaoxian2021'
-    output_dir_root = '/public/home/zncui/pycharm_project/mmdetection/zhaoxian2021'
-
+    input_dir = '/public/home/zncui/pycharm_project/mmdetection/tmp'
+    output_dir_root = '/public/home/zncui/pycharm_project/mmdetection/tmp_result'
+    # aaaaaaaaaaaa
     # 使用 GPU:1
     model = init_detector(config_file, checkpoint_file, device='cuda:1')
 
