@@ -607,14 +607,14 @@ if __name__ == '__main__':
                     # 将结果保存为 log 文件
                     log_path = os.path.join(output_dir, f'results.log')
                     with open(log_path, 'a') as log_file:
-                        log_file.write(f"IOU: {iou_type}, NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
-                        log_file.write("汇总指标:\n")
-                        log_file.write(f"总精确率: {total_precision:.4f}\n")
-                        log_file.write(f"总召回率: {total_recall:.4f}\n")
-                        log_file.write(f"总F1分数: {total_f1:.4f}\n")
-                        log_file.write(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}\n")
-                        log_file.write(f"真正例(TP): {total_tp}, 假正例(FP): {total_fp}, 假负例(FN): {total_fn}\n")
-                        log_file.write(f"当前最小差异: {min_diff}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}\n")
+                        # log_file.write(f"IOU: {iou_type}, NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
+                        # log_file.write("汇总指标:\n")
+                        # log_file.write(f"总精确率: {total_precision:.4f}\n")
+                        # log_file.write(f"总召回率: {total_recall:.4f}\n")
+                        # log_file.write(f"总F1分数: {total_f1:.4f}\n")
+                        # log_file.write(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}\n")
+                        # log_file.write(f"真正例(TP): {total_tp}, 假正例(FP): {total_fp}, 假负例(FN): {total_fn}\n")
+                        # log_file.write(f"当前最小差异: {min_diff}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}\n")
                         log_file.write("-" * 50 + "\n")
 
 
