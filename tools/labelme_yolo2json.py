@@ -11,7 +11,8 @@ except ImportError:
     from PIL import Image
 
 # --------- 配置区，改成你自己的路径即可 ----------
-DATA_DIR = "/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs"
+# DATA_DIR = "/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs"
+DATA_DIR = "/public/home/zncui/datasets/wheat-guo-dataset/4images"
 CLASSES_FILE = "classes.txt"
 # ------------------------------------------------------
 
@@ -161,9 +162,63 @@ def batch_convert(dir_path, classes_file="classes.txt", exts=(".jpg", ".jpeg", "
             json.dump(json_dict, jf, ensure_ascii=False, indent=2)
         # print(f"[OK] Wrote {json_path.name} ({len(json_dict['shapes'])} shapes)")
 
+def draw_shapes_on_image_yolo(image_path, txt_path):
+    if cv2 is None:
+        raise ImportError("OpenCV is required for drawing shapes on images.")
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise RuntimeError(f"Failed to read image: {image_path}")
+
+    with open(txt_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    for line in lines:
+        parts = line.strip().split()
+        if len(parts) < 5:
+            continue
+        cls_id, x_c, y_c, w, h = map(float, parts[:5])
+        x1 = int((x_c - w / 2) * img.shape[1])
+        y1 = int((y_c - h / 2) * img.shape[0])
+        x2 = int((x_c + w / 2) * img.shape[1])
+        y2 = int((y_c + h / 2) * img.shape[0])
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    image_name = os.path.splitext(image_path)[0]
+    base_dir = os.path.dirname(image_path)
+    out_path = os.path.join(base_dir, f"{image_name}_drawn.jpg")
+    cv2.imwrite(out_path, img)
+
+def adjust_format(DATA_DIR):
+    for root, _, files in os.walk(DATA_DIR):
+        for file in files:
+            if file.endswith('.txt') and not file.startswith('classes'):
+                txt_path = os.path.join(root, file)
+                file_name = os.path.splitext(file)[0]
+                out_path = os.path.join(root, f'{file_name}_yolo.txt')
+                img_path = os.path.join(root, file.replace('.txt', '.jpg'))
+                img_w, img_h = get_image_size(img_path)
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    for line in lines:
+                        parts = line.strip().split()
+                        index, x_top_lf, y_top_lf, w, h = parts[0], parts[1], parts[2], parts[3], parts[4]
+                        # 绝对坐标转换为相对坐标
+                        x_c = (float(x_top_lf) + float(w) / 2) / img_w
+                        y_c = (float(y_top_lf) + float(h) / 2) / img_h
+                        w_rel = float(w) / img_w
+                        h_rel = float(h) / img_h
+                        # 只有一个目标类，所以这里直接写 0
+                        f.write(f"0 {x_c} {y_c} {w_rel} {h_rel}\n")
+                print(f"[INFO] Adjusted format for {txt_path}")
+                # draw_shapes_on_image_yolo(image_path=img_path, txt_path=out_path)
+
+
 def main():
     print(f"Converting YOLO labels to Labelme JSON in '{DATA_DIR}' using classes file '{CLASSES_FILE}'")
+    # adjust_format(DATA_DIR)
     batch_convert(DATA_DIR, classes_file=CLASSES_FILE)
+
 
 if __name__ == "__main__":
     main()

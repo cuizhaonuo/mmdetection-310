@@ -1179,6 +1179,7 @@ class CoDinoTransformer(CoDeformableDetrTransformer):
         cls_out_features = cls_branches[self.decoder.num_layers].out_features
         topk = self.two_stage_num_proposals
         # NOTE In DeformDETR, enc_outputs_class[..., 0] is used for topk
+        # print('enc_outputs_class.max(-1)[0]: ', enc_outputs_class.max(-1)[0].shape, ' topk: ', topk)
         topk_indices = torch.topk(enc_outputs_class.max(-1)[0], topk, dim=1)[1]
 
         topk_score = torch.gather(

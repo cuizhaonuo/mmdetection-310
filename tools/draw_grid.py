@@ -2,8 +2,10 @@ import os
 import cv2
 from tqdm import tqdm
 # 输入／输出目录
-input_dir = '/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs'
-output_dir = '/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs'
+# input_dir = '/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs'
+# output_dir = '/public/home/zncui/datasets/wheat-guo-dataset/imgs_and_labels/val_imgs'
+input_dir = '/public/home/zncui/datasets/wheat-guo-dataset/4images'
+output_dir = '/public/home/zncui/datasets/wheat-guo-dataset/4images'
 os.makedirs(output_dir, exist_ok=True)
 
 # 读取第一张 JPG

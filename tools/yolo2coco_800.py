@@ -6,7 +6,7 @@ from PIL import Image
 import shutil
 from tqdm import tqdm
 
-dataset_dir = '/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_big_image'
+dataset_dir = '/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_big_image_v2split'
 
 train_img_list = sorted(glob.glob(os.path.join(dataset_dir, 'images', 'train', '*.jpg')))
 val_img_list = sorted(glob.glob(os.path.join(dataset_dir, 'images', 'val', '*.jpg')))
@@ -14,14 +14,15 @@ val_img_list = sorted(glob.glob(os.path.join(dataset_dir, 'images', 'val', '*.jp
 train_label_list = sorted(glob.glob(os.path.join(dataset_dir, 'labels', 'train', '*.txt')))
 val_label_list = sorted(glob.glob(os.path.join(dataset_dir, 'labels', 'val', '*.txt')))
 
-target_dir = '/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_1024x1024'
+target_dir = '/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_1024x1024_p'
 target_train_img_dir = os.path.join(target_dir, 'images', 'train')
 target_val_img_dir = os.path.join(target_dir, 'images', 'val')
 target_train_label_dir = os.path.join(target_dir, 'labels', 'train')
 target_val_label_dir = os.path.join(target_dir, 'labels', 'val')
+os.makedirs(target_val_label_dir, exist_ok=True)
 
 # ==== 配置区 ====
-YOLO_ROOT = "/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_1024x1024"
+YOLO_ROOT = "/public/home/zncui/datasets/wheat-guo-dataset/yolo_wheat_1024x1024_p"
 OUTPUT_SUBDIR = "coco2017"  # 会在 YOLO_ROOT 下创建 coco2017/
 # =================
 
@@ -358,10 +359,10 @@ def yolo2coco():
 
 def main():
     print("Processing training dataset...")
-    # process_dataset(train_img_list, train_label_list, target_train_img_dir, target_train_label_dir)
+    process_dataset(train_img_list, train_label_list, target_train_img_dir, target_train_label_dir)
 
     print("Processing validation dataset...")
-    # process_dataset(val_img_list, val_label_list, target_val_img_dir, target_val_label_dir)
+    process_dataset(val_img_list, val_label_list, target_val_img_dir, target_val_label_dir)
 
     yolo2coco()
 

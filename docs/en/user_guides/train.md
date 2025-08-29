@@ -141,7 +141,7 @@ Below is an example of using 16 GPUs to train Mask R-CNN on a Slurm partition na
 GPUS=16 ./tools/slurm_train.sh dev mask_r50_1x configs/mask-rcnn_r50_fpn_1x_coco.py /nfs/xxxx/mask_rcnn_r50_fpn_1x
 ```
 
-You can check [the source code](../../../tools/scripts/slurm_train.sh) to review full arguments and environment variables.
+You can check [the source code](../../../tools/slurm_train.sh) to review full arguments and environment variables.
 
 When using Slurm, the port option needs to be set in one of the following ways:
 

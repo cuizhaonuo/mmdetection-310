@@ -146,7 +146,6 @@ class CoDETR(BaseDetector):
     def loss(self, batch_inputs: Tensor,
              batch_data_samples: SampleList) -> Union[dict, list]:
         batch_input_shape = batch_data_samples[0].batch_input_shape
-        # lsj 是 “Large Scale Jittering” 的缩写，意为大尺度抖动。它是一种数据增强技术，通过在很大范围内随机调整图像的尺寸和进行裁剪，来提高模型对于不同大小物体的检测性能。
         if self.use_lsj:
             for data_samples in batch_data_samples:
                 img_metas = data_samples.metainfo

@@ -112,12 +112,6 @@ class CoDINOHead(DINOHead):
                 dn_label_query=None,
                 dn_bbox_query=None,
                 attn_mask=None):
-        # mlvl_feats
-        # tuple((1, 256, 320, 320),
-        #       (1, 256, 160, 160),
-        #       (1, 256, 80, 80),
-        #       (1, 256, 40, 40),
-        #       (1, 256, 20, 20))
         batch_size = mlvl_feats[0].size(0)
         input_img_h, input_img_w = img_metas[0]['batch_input_shape']
         img_masks = mlvl_feats[0].new_ones(
@@ -126,8 +120,6 @@ class CoDINOHead(DINOHead):
             img_h, img_w = img_metas[img_id]['img_shape']
             img_masks[img_id, :img_h, :img_w] = 0
 
-        # [(1, 320, 320), ... (1, 20, 20)]
-        # [(1, 256, 320, 320), ... (1, 256, 20, 20)]
         mlvl_masks = []
         mlvl_positional_encodings = []
         for feat in mlvl_feats:
@@ -137,14 +129,7 @@ class CoDINOHead(DINOHead):
             mlvl_positional_encodings.append(
                 self.positional_encoding(mlvl_masks[-1]))
 
-        # hs(hidden states): Transformer 解码器每一层的输出特征，也称为隐藏状态。其形状为 (num_decoder_layers, num_queries, batch_size, embed_dims)。
-        # inter_references: 解码器每一层生成的中间参考点（即边界框）。其形状为 (num_decoder_layers, batch_size, num_queries, 4)。
-        # topk_score: 当采用两阶段（two-stage）方法时，这是从编码器输出中选出的得分最高的 top-k 个提议（proposal）的分类分数。
-        # topk_anchor: 当采用两阶段方法时，这是从编码器输出中选出的 top-k 个提议的边界框坐标。
-        # enc_outputs: 编码器所有层的输出特征。它是一个张量，将所有特征层展平后拼接而成。
         query_embeds = None
-        # 本质上传入的是 mlvl_feats, mlvl_masks, mlvl_positional_encodings
-        # (6, 900, 1, 256), (7, 1, 900, 4), (1, 900, 1), (1, 900, 4), (136400, 1, 256)
         hs, inter_references, topk_score, topk_anchor, enc_outputs = \
             self.transformer(
                 mlvl_feats,
@@ -157,7 +142,6 @@ class CoDINOHead(DINOHead):
                 reg_branches=self.reg_branches if self.with_box_refine else None,  # noqa:E501
                 cls_branches=self.cls_branches if self.as_two_stage else None  # noqa:E501
             )
-        # [(1, 256, 320, 320), ... (1, 256, 20, 20), (1, 256, 10, 10)] len == 6
         outs = []
         num_level = len(mlvl_feats)
         start = 0
@@ -169,7 +153,6 @@ class CoDINOHead(DINOHead):
             outs.append(feat.reshape(bs, c, h, w))
         outs.append(self.downsample(outs[-1]))
 
-        # (6, 900, 1, 256) --> (6, 1, 900, 256)
         hs = hs.permute(0, 2, 1, 3)
 
         if dn_label_query is not None and dn_label_query.size(1) == 0:
@@ -178,8 +161,6 @@ class CoDINOHead(DINOHead):
             # RuntimeError when using distributed mode.
             hs[0] += self.dn_generator.label_embedding.weight[0, 0] * 0.0
 
-        # [(1, 900, 1) x 6]
-        # [(1, 900, 4) x 6]
         outputs_classes = []
         outputs_coords = []
 
@@ -197,7 +178,6 @@ class CoDINOHead(DINOHead):
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
 
-        # (6, 900, 1), (6, 900, 4)
         outputs_classes = torch.stack(outputs_classes)
         outputs_coords = torch.stack(outputs_coords)
 

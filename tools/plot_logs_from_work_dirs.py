@@ -146,5 +146,5 @@ def plot_work_dirs_logs(model_output_dir):
         mosaic_images(input_dir, output_dir, out_filename=f'all_metrics_grid_{key}.png')
 
 # plot_work_dirs_logs(model_output_dir='co_dino_5scale_swin_l_16xb1_16e_o365tococo')
-plot_work_dirs_logs(model_output_dir='co_dino_guo_yolo2coco_test2')
+plot_work_dirs_logs(model_output_dir='co_dino_guo_yolo2coco_2')
 

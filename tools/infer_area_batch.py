@@ -8,6 +8,7 @@ import time
 import numpy as np
 import pandas as pd
 from mpmath import linspace
+import cv2
 import math
 from tqdm import tqdm
 from mmdet.apis import init_detector, inference_detector
@@ -23,7 +24,7 @@ import matplotlib.patches as patches
 # 加快推理速度的设置
 torch.backends.cudnn.benchmark = True
 
-def sliding_window_inference(model, img, window_size=1024, overlap_ratio=0.1,
+def _sliding_window_inference(model, img, window_size=1024, overlap_ratio=0.1,
                              score_thr=0.0, nms_iou=0.1, iou_type='IoU'):
     """对图像进行滑窗推理。"""
     h, w = img.shape[:2]
@@ -69,6 +70,79 @@ def sliding_window_inference(model, img, window_size=1024, overlap_ratio=0.1,
     merged_instances = InstanceData.cat(all_detections)
     keep = batched_nms(merged_instances.bboxes, merged_instances.scores,
                        merged_instances.labels, nms_iou, iou_type=iou_type)
+    final_result = DetDataSample()
+    final_result.pred_instances = merged_instances[keep[:]].cpu()
+    return final_result
+
+def sliding_window_inference(model, img, window_size=1024, overlap_ratio=0.1,
+                             score_thr=0.0, nms_iou=0.1, iou_type='IoU'):
+    """对图像进行滑窗推理（边缘残块 Pad 到固定窗口大小）"""
+    h, w = img.shape[:2]
+    stride = int(window_size * (1 - overlap_ratio))
+    all_detections = []
+
+    for y in range(0, h, stride):
+        for x in range(0, w, stride):
+            y_end = min(y + window_size, h)
+            x_end = min(x + window_size, w)
+
+            crop = img[y:y_end, x:x_end, :]
+            crop_h, crop_w = crop.shape[:2]
+
+            # ---------- 关键改动：把残块 pad 到固定窗口大小 ----------
+            if crop_h != window_size or crop_w != window_size:
+                pad_bottom = window_size - crop_h
+                pad_right  = window_size - crop_w
+                # 用常见的灰色/均值做填充，避免引入强边界；你也可以换成(114,114,114)
+                crop = cv2.copyMakeBorder(
+                    crop, 0, pad_bottom, 0, pad_right,
+                    borderType=cv2.BORDER_CONSTANT, value=(114, 114, 114)
+                )
+            # --------------------------------------------------------
+
+            # 推理
+            result = inference_detector(model, crop)
+            instances = result.pred_instances
+
+            # 筛分数
+            valid_mask = instances.scores > score_thr
+            instances = instances[valid_mask]
+
+            if len(instances) > 0:
+                # ---------- 关键改动：剔除落在 pad 区的框 ----------
+                # 只保留中心点落在“原始 crop 有效区域”内的框
+                # 有效区域：宽 crop_w，高 crop_h（pad 在右/下）
+                b = instances.bboxes
+                cx = (b[:, 0] + b[:, 2]) * 0.5
+                cy = (b[:, 1] + b[:, 3]) * 0.5
+                in_valid = (cx < crop_w) & (cy < crop_h)
+                instances = instances[in_valid]
+                # ----------------------------------------------------
+
+                if len(instances) > 0:
+                    # 回映到原图坐标，并裁剪到原图边界
+                    instances = instances.cpu()
+                    instances.bboxes[:, 0::2] += x
+                    instances.bboxes[:, 1::2] += y
+                    instances.bboxes[:, 0::2] = torch.clamp(instances.bboxes[:, 0::2], 0, w)
+                    instances.bboxes[:, 1::2] = torch.clamp(instances.bboxes[:, 1::2], 0, h)
+                    all_detections.append(instances)
+
+    if len(all_detections) == 0:
+        empty_inst = InstanceData()
+        empty_inst.bboxes = torch.zeros((0, 4), dtype=torch.float32)
+        empty_inst.scores = torch.zeros((0,), dtype=torch.float32)
+        empty_inst.labels = torch.zeros((0,), dtype=torch.int64)
+        empty_result = DetDataSample()
+        empty_result.pred_instances = empty_inst
+        return empty_result
+
+    # 合并 + NMS
+    merged_instances = InstanceData.cat(all_detections)
+    keep = batched_nms(
+        merged_instances.bboxes, merged_instances.scores,
+        merged_instances.labels, nms_iou, iou_type=iou_type
+    )
     final_result = DetDataSample()
     final_result.pred_instances = merged_instances[keep[:]].cpu()
     return final_result
@@ -269,16 +343,19 @@ if __name__ == '__main__':
     # config_file = os.path.join(base_dir,
     #                            'work_dirs/co_dino_5scale_swin_l_16xb1_16e_o365tococo/co_dino_5scale_swin_l_16xb1_16e_o365tococo_pred.py')
     # checkpoint_file = os.path.join(base_dir, 'work_dirs/co_dino_5scale_swin_l_16xb1_16e_o365tococo/epoch_16.pth')
+
+    # 目前的配置：经过 labelme 进一步调整后的数据训练得到的权重：wor_dirs --> co_dino_guo_yolo2coco_2
     config_file = os.path.join(base_dir,
-                               'work_dirs/co_dino_guo_yolo2coco_1/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py')
-    checkpoint_file = os.path.join(base_dir, 'work_dirs/co_dino_guo_yolo2coco_1/epoch_16.pth')
+                               'work_dirs/co_dino_guo_yolo2coco_2/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py')
+    checkpoint_file = os.path.join(base_dir, 'work_dirs/co_dino_guo_yolo2coco_2/epoch_16.pth')
 
     # 输入和输出目录
-    # 本次输入是 20 张验证集
+    # 本次输入是 15 张图片
     dataset_dir = '/public/home/zncui/datasets/wheat-guo-dataset'
-    input_dir = os.path.join(dataset_dir, 'yolo_wheat_big_image', 'images', 'val')
+    # input_dir = os.path.join(dataset_dir, 'yolo_wheat_big_image_v2split', 'images', 'test')
+    input_dir = os.path.join(dataset_dir, 'wheat-guo-crop')
     os.makedirs(input_dir, exist_ok=True)
-    output_dir = os.path.join(dataset_dir, 'yolo_wheat_big_image_results')
+    output_dir = os.path.join(dataset_dir, 'wheat-guo-crop-result')
     os.makedirs(output_dir, exist_ok=True)
 
     # 使用 GPU:1
@@ -295,9 +372,9 @@ if __name__ == '__main__':
                 all_image_files.append(os.path.join(root, file))
 
     # Test
-    all_image_files = sorted(all_image_files)[:2]
+    # all_image_files = sorted(all_image_files)[:2]
 
-    # all_image_files = [f for f in all_image_files if os.path.basename(f) == '23B345.jpg']
+    # all_image_files = [f for f in all_image_files if os.path.basename(f) == '5036·.jpg']
 
     total_files = len(all_image_files)
     start_time = time.time()
@@ -316,8 +393,8 @@ if __name__ == '__main__':
         cur_nms_threshold = -1
         cur_score_threshold = -1
         for iou_type in iou_type_list:
-            for nms_threshold in np.linspace(0.2, 0.6, 2):
-                for score_threshold in np.linspace(0.2, 0.6, 2):
+            for nms_threshold in np.linspace(0.556, 0.6, 1):
+                for score_threshold in np.linspace(0.314, 0.6, 1):
                     # pred_counts = 0
                     print(f"IOU: {iou_type}, NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}")
 
@@ -326,21 +403,24 @@ if __name__ == '__main__':
                     #     'annotations': [],
                     #     'categories': [{'id': 1, 'name': 'wheat'}]
                     # }
+                    count = 0
+                    excel_data = []
                     for idx, input_path in enumerate(tqdm(all_image_files, desc="Processing images"), 1):
+                        # continue # 如果只需要测试性能，则跳过实际处理
                         filename = os.path.basename(input_path)
                         basename = os.path.splitext(filename)[0]
-                        try:
-                        # for i in range(1):
+                        # try:
+                        for i in range(1):
                             output_ori_image_path = os.path.join(output_dir, 'ori', filename)
                             makedirs(os.path.join(output_dir, 'ori'), exist_ok=True)
-                            # output_rect_image_path = os.path.join(output_dir, 'rect', filename)
-                            # makedirs(os.path.join(output_dir, 'rect'), exist_ok=True)
-                            # output_circle_image_path = os.path.join(output_dir, 'circle', filename)
-                            # makedirs(os.path.join(output_dir, 'circle'), exist_ok=True)
+                            output_rect_image_path = os.path.join(output_dir, 'rect', filename)
+                            makedirs(os.path.join(output_dir, 'rect'), exist_ok=True)
+                            output_circle_image_path = os.path.join(output_dir, 'circle', filename)
+                            makedirs(os.path.join(output_dir, 'circle'), exist_ok=True)
                             output_txt_image_path = os.path.join(output_dir, 'txt', f'{basename}.txt')
                             makedirs(os.path.join(output_dir, 'txt'), exist_ok=True)
-                            # output_index_path = os.path.join(output_dir, 'index', filename)
-                            # makedirs(os.path.join(output_dir, 'index'), exist_ok=True)
+                            output_index_path = os.path.join(output_dir, 'index', filename)
+                            makedirs(os.path.join(output_dir, 'index'), exist_ok=True)
 
                             # 将原图复制到输出目录
                             shutil.copy2(input_path, output_ori_image_path)
@@ -368,35 +448,44 @@ if __name__ == '__main__':
                             scores = pred_instances.scores.cpu().numpy()
                             labels = pred_instances.labels.cpu().numpy()
 
+
                             # pred_counts += len(bboxes)
 
                             # 可视化并保存结果
-                            # visualizer.add_datasample(
-                            #     'detection', img, result,
-                            #     draw_pred=True, draw_gt=False,
-                            #     show=False, out_file=output_rect_image_path
-                            # )
+                            visualizer.add_datasample(
+                                'detection', img, result,
+                                draw_pred=True, draw_gt=False,
+                                show=False, out_file=output_rect_image_path
+                            )
 
                             # 绘制圆点
-                            # import cv2
-                            #
-                            # img2 = img.copy()  # assume img is a NumPy array H×W×3, dtype=uint8
-                            # for bbox in bboxes:
-                            #     x0, y0, x1, y1 = bbox
-                            #     cx, cy = int((x0 + x1) / 2), int((y0 + y1) / 2)
-                            #     cv2.circle(img2, (cx, cy), radius=5, color=(255, 0, 0), thickness=-1, lineType=cv2.LINE_AA)
-                            # img2_bgr = cv2.cvtColor(img2, cv2.COLOR_RGB2BGR)
-                            # cv2.imwrite(output_circle_image_path, img2_bgr)
-                            #
-                            # # 带框+编号的版本
-                            # img3 = img.copy()
-                            # for i, bbox in enumerate(bboxes):
-                            #     x0, y0, x1, y1 = [int(v) for v in bbox]
-                            #     cv2.rectangle(img3, (x0, y0), (x1, y1), (0, 255, 0), 1, lineType=cv2.LINE_AA)
-                            #     cv2.putText(img3, str(i), (x0, max(y0 - 5, 0)),
-                            #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, lineType=cv2.LINE_AA)
-                            # img3_bgr = cv2.cvtColor(img3, cv2.COLOR_RGB2BGR)
-                            # cv2.imwrite(output_index_path, img3_bgr)
+                            import cv2
+
+                            img2 = img.copy()  # assume img is a NumPy array H×W×3, dtype=uint8
+                            for bbox in bboxes:
+                                x0, y0, x1, y1 = bbox
+                                cx, cy = int((x0 + x1) / 2), int((y0 + y1) / 2)
+                                cv2.circle(img2, (cx, cy), radius=5, color=(255, 0, 0), thickness=-1, lineType=cv2.LINE_AA)
+                            img2_bgr = cv2.cvtColor(img2, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(output_circle_image_path, img2_bgr)
+
+                            # 带框+编号的版本
+                            img3 = img.copy()
+                            for i, bbox in enumerate(bboxes):
+                                x0, y0, x1, y1 = [int(v) for v in bbox]
+                                cv2.rectangle(img3, (x0, y0), (x1, y1), (0, 255, 0), 1, lineType=cv2.LINE_AA)
+                                cv2.putText(img3, str(i), (x0, max(y0 - 5, 0)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, lineType=cv2.LINE_AA)
+                            img3_bgr = cv2.cvtColor(img3, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(output_index_path, img3_bgr)
+
+                            # 保存结果到 Excel
+                            count += len(bboxes)
+                            excel_data.append({
+                                'filename': filename,
+                                'count': len(bboxes)
+                            })
+
 
 
 
@@ -410,32 +499,32 @@ if __name__ == '__main__':
                             # })
 
                             # 写入 TXT (详细的坐标信息)
-                            # txt_path = output_txt_image_path
-                            # with open(txt_path, 'w') as f_txt:
-                            #     for i, bbox in enumerate(bboxes):
-                            #         x_min, y_min, x_max, y_max = bbox
-                            #         x, y, w, h = map(int, (x_min, y_min, x_max - x_min, y_max - y_min))
-                            #         # 左上角坐标和宽高格式
-                            #         f_txt.write(f"{i} {x} {y} {w} {h}\n")
-
-                            # 测试
-                            output_txt_image_path = os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}', f'{basename}.txt')
-                            os.makedirs(os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}'), exist_ok=True)
                             txt_path = output_txt_image_path
                             with open(txt_path, 'w') as f_txt:
                                 for i, bbox in enumerate(bboxes):
                                     x_min, y_min, x_max, y_max = bbox
-                                    # yolo 格式
-                                    x_center = (x_min + x_max) / 2
-                                    y_center = (y_min + y_max) / 2
-                                    width = x_max - x_min
-                                    height = y_max - y_min
-                                    # 注意：yolo 格式的坐标需要归一化到 [0, 1] 范围
-                                    x_center /= img.shape[1]
-                                    y_center /= img.shape[0]
-                                    width /= img.shape[1]
-                                    height /= img.shape[0]
-                                    f_txt.write(f"0 {x_center} {y_center} {width} {height}\n")
+                                    x, y, w, h = map(int, (x_min, y_min, x_max - x_min, y_max - y_min))
+                                    # 左上角坐标和宽高格式
+                                    f_txt.write(f"{i} {x} {y} {w} {h}\n")
+
+                            # 测试
+                            # output_txt_image_path = os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}', f'{basename}.txt')
+                            # os.makedirs(os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}'), exist_ok=True)
+                            # txt_path = output_txt_image_path
+                            # with open(txt_path, 'w') as f_txt:
+                            #     for i, bbox in enumerate(bboxes):
+                            #         x_min, y_min, x_max, y_max = bbox
+                            #         # yolo 格式
+                            #         x_center = (x_min + x_max) / 2
+                            #         y_center = (y_min + y_max) / 2
+                            #         width = x_max - x_min
+                            #         height = y_max - y_min
+                            #         # 注意：yolo 格式的坐标需要归一化到 [0, 1] 范围
+                            #         x_center /= img.shape[1]
+                            #         y_center /= img.shape[0]
+                            #         width /= img.shape[1]
+                            #         height /= img.shape[0]
+                            #         f_txt.write(f"0 {x_center} {y_center} {width} {height}\n")
 
                             # image = {
                             #     'file_name': filename,
@@ -459,9 +548,14 @@ if __name__ == '__main__':
                             #     }
                             #     coco_annotations['annotations'].append(annotation)
 
-
-                        except Exception as e:
-                            print(f"\n处理 {filename} 时出错: {str(e)}")
+                    # 处理完所有图像后，将数据保存到Excel
+                    # results_dir = os.path.join(output_dir, 'results')
+                    # os.makedirs(results_dir, exist_ok=True)
+                    excel_path = os.path.join(output_dir, f'detection_counts.xlsx')
+                    df = pd.DataFrame(excel_data)
+                    df.to_excel(excel_path, index=False)
+                        # except Exception as e:
+                        #     print(f"\n处理 {filename} 时出错: {str(e)}")
 
 
                     print(f"已处理 {idx}/{total_files} 张图片，耗时: {time.time() - start_time:.2f} 秒")
@@ -469,144 +563,178 @@ if __name__ == '__main__':
                     # label_instances_dir = os.path.join(dataset_dir, 'yolo_wheat_big_image', 'labels', 'val')
                     # label_instances_files = [f for f in glob.glob(os.path.join(label_instances_dir, '*.txt')) if
                     #                          os.path.basename(f) != 'classes.txt']
-                    pred_instances_dir = os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}')
-                    pred_instances_files = glob.glob(os.path.join(pred_instances_dir, '*.txt'))
-                    total_diff_counts = 0
-                    total_tp = 0
-                    total_fp = 0
-                    total_fn = 0
-                    total_gt_boxes = 0
-                    total_pred_boxes = 0
 
-                    for pred_file in pred_instances_files:
-                        filename = os.path.basename(pred_file)
-                        label_file = os.path.join(dataset_dir, 'yolo_wheat_big_image', 'labels', 'val', filename)
-                        if not os.path.exists(label_file):
-                            break
-                        img_file = label_file.replace('labels', 'images').replace('.txt', '.jpg')
-                        h, w = mmcv.imread(img_file, channel_order='rgb').shape[:2]
-                        with open(label_file, 'r') as f_label, open(pred_file, 'r') as f_pred:
-                            label_lines = f_label.readlines()
-                            pred_lines = f_pred.readlines()
+                    # pred_instances_dir = os.path.join(output_dir, 'txt', f'nms_{nms_threshold}_score_{score_threshold}')
+                    # pred_instances_files = glob.glob(os.path.join(pred_instances_dir, '*.txt'))
+                    # total_diff_counts = 0
+                    # total_tp = 0
+                    # total_fp = 0
+                    # total_fn = 0
+                    # total_gt_boxes = 0
+                    # total_pred_boxes = 0
 
-                            # 解析 YOLO 格式文件
-                            gt_boxes = []
-                            for line in label_lines:
-                                parts = line.strip().split()
-                                if len(parts) >= 5:  # 确保有足够的数据
-                                    class_id, x_center, y_center, width, height = map(float, parts[:5])
-                                    # 转换为绝对坐标
-                                    x_center_abs = x_center * w
-                                    y_center_abs = y_center * h
-                                    width_abs = width * w
-                                    height_abs = height * h
-                                    gt_boxes.append([x_center_abs, y_center_abs, width_abs, height_abs])
+                    # for pred_file in pred_instances_files:
+                    #     filename = os.path.basename(pred_file)
+                    #     label_file = os.path.join(dataset_dir, 'yolo_wheat_big_image_v2split', 'labels', 'test', filename)
+                    #     if not os.path.exists(label_file):
+                    #         break
+                    #     img_file = label_file.replace('labels', 'images').replace('.txt', '.jpg')
+                    #     h, w = mmcv.imread(img_file, channel_order='rgb').shape[:2]
+                    #     with open(label_file, 'r') as f_label, open(pred_file, 'r') as f_pred:
+                    #         label_lines = f_label.readlines()
+                    #         pred_lines = f_pred.readlines()
+                    #
+                    #         # 解析 YOLO 格式文件
+                    #         gt_boxes = []
+                    #         for line in label_lines:
+                    #             parts = line.strip().split()
+                    #             if len(parts) >= 5:  # 确保有足够的数据
+                    #                 class_id, x_center, y_center, width, height = map(float, parts[:5])
+                    #                 # 转换为绝对坐标
+                    #                 x_center_abs = x_center * w
+                    #                 y_center_abs = y_center * h
+                    #                 width_abs = width * w
+                    #                 height_abs = height * h
+                    #                 gt_boxes.append([x_center_abs, y_center_abs, width_abs, height_abs])
+                    #
+                    #         pred_boxes = []
+                    #         for line in pred_lines:
+                    #             parts = line.strip().split()
+                    #             if len(parts) >= 5:  # 确保有足够的数据
+                    #                 class_id, x_center, y_center, width, height = map(float, parts[:5])
+                    #                 # 转换为绝对坐标
+                    #                 x_center_abs = x_center * w
+                    #                 y_center_abs = y_center * h
+                    #                 width_abs = width * w
+                    #                 height_abs = height * h
+                    #                 pred_boxes.append([x_center_abs, y_center_abs, width_abs, height_abs])
+                    #
+                    #         total_diff_counts_log = os.path.join(output_dir, 'total_diff_counts_log.txt')
+                    #
+                    #         # 计算逐图绝对差平均
+                    #         diff_count = abs(len(gt_boxes) - len(pred_boxes))
+                    #         total_diff_counts += diff_count
+                    #         with open(total_diff_counts_log, 'a') as f_diff:
+                    #             f_diff.write(f"当前图片{os.path.basename(pred_file)}，预测数量：{len(pred_boxes)}，实际数量：{len(gt_boxes)}，差值：{diff_count}\n")
+                    #
+                    #
+                    #
+                    #         total_gt_boxes += len(gt_boxes)
+                    #         total_pred_boxes += len(pred_boxes)
 
-                            pred_boxes = []
-                            for line in pred_lines:
-                                parts = line.strip().split()
-                                if len(parts) >= 5:  # 确保有足够的数据
-                                    class_id, x_center, y_center, width, height = map(float, parts[:5])
-                                    # 转换为绝对坐标
-                                    x_center_abs = x_center * w
-                                    y_center_abs = y_center * h
-                                    width_abs = width * w
-                                    height_abs = height * h
-                                    pred_boxes.append([x_center_abs, y_center_abs, width_abs, height_abs])
+                            # 检测
+                            # with open(total_diff_counts_log, 'a') as f_diff:
+                            #     f_diff.write(f"当前图片{pred_file}，预测数量：{len(pred_boxes)}，实际数量：{len(gt_boxes)}\n")
+                            #     f_diff.write(f"总预测数量：{total_pred_boxes}，实际数量：{total_gt_boxes}\n")
 
-                            total_gt_boxes += len(gt_boxes)
-                            total_pred_boxes += len(pred_boxes)
-
-
-                            # 计算 IoU
-                            def calculate_iou(box1, box2):
-                                # YOLO格式 [x_center, y_center, width, height]
-                                # 转换为 [x1, y1, x2, y2]
-                                b1_x1, b1_y1 = box1[0] - box1[2] / 2, box1[1] - box1[3] / 2
-                                b1_x2, b1_y2 = box1[0] + box1[2] / 2, box1[1] + box1[3] / 2
-                                b2_x1, b2_y1 = box2[0] - box2[2] / 2, box2[1] - box2[3] / 2
-                                b2_x2, b2_y2 = box2[0] + box2[2] / 2, box2[1] + box2[3] / 2
-
-                                # 计算交集
-                                inter_x1 = max(b1_x1, b2_x1)
-                                inter_y1 = max(b1_y1, b2_y1)
-                                inter_x2 = min(b1_x2, b2_x2)
-                                inter_y2 = min(b1_y2, b2_y2)
-
-                                # 交集面积
-                                inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
-
-                                # 各自面积
-                                b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
-                                b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-
-                                # IoU
-                                iou = inter_area / (b1_area + b2_area - inter_area + 1e-7)
-                                return iou
-
-
-                            # 使用 IoU 阈值匹配边界框
-                            iou_threshold = nms_threshold  # 可调整的 IoU 阈值
-                            matched_gt = set()
-                            tp = 0  # 真正例
-                            fp = 0  # 假正例
-
-                            for pred_box in pred_boxes:
-                                best_iou = 0
-                                best_gt_idx = -1
-
-                                for gt_idx, gt_box in enumerate(gt_boxes):
-                                    if gt_idx in matched_gt:
-                                        continue  # 跳过已匹配的真实框
-
-                                    iou = calculate_iou(pred_box, gt_box)
-                                    if iou > best_iou:
-                                        best_iou = iou
-                                        best_gt_idx = gt_idx
-
-                                if best_iou >= iou_threshold:
-                                    tp += 1
-                                    matched_gt.add(best_gt_idx)
-                                else:
-                                    fp += 1
-
-                            # 计算当前图片的指标
-                            fn = len(gt_boxes) - len(matched_gt)  # 假负例
-
-                            # 累加到总计数
-                            total_tp += tp
-                            total_fp += fp
-                            total_fn += fn
-
-                            # 计算单张图片的指标
-                            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-                            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-                            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+                            # # 计算 IoU
+                            # def calculate_iou(box1, box2):
+                            #     # YOLO格式 [x_center, y_center, width, height]
+                            #     # 转换为 [x1, y1, x2, y2]
+                            #     b1_x1, b1_y1 = box1[0] - box1[2] / 2, box1[1] - box1[3] / 2
+                            #     b1_x2, b1_y2 = box1[0] + box1[2] / 2, box1[1] + box1[3] / 2
+                            #     b2_x1, b2_y1 = box2[0] - box2[2] / 2, box2[1] - box2[3] / 2
+                            #     b2_x2, b2_y2 = box2[0] + box2[2] / 2, box2[1] + box2[3] / 2
+                            #
+                            #     # 计算交集
+                            #     inter_x1 = max(b1_x1, b2_x1)
+                            #     inter_y1 = max(b1_y1, b2_y1)
+                            #     inter_x2 = min(b1_x2, b2_x2)
+                            #     inter_y2 = min(b1_y2, b2_y2)
+                            #
+                            #     # 交集面积
+                            #     inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+                            #
+                            #     # 各自面积
+                            #     b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+                            #     b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+                            #
+                            #     # IoU
+                            #     iou = inter_area / (b1_area + b2_area - inter_area + 1e-7)
+                            #     return iou
+                            #
+                            #
+                            # # # 使用 IoU 阈值匹配边界框
+                            # iou_threshold = nms_threshold  # 可调整的 IoU 阈值
+                            # matched_gt = set()
+                            # tp = 0  # 真正例
+                            # fp = 0  # 假正例
+                            #
+                            # for pred_box in pred_boxes:
+                            #     best_iou = 0
+                            #     best_gt_idx = -1
+                            #
+                            #     for gt_idx, gt_box in enumerate(gt_boxes):
+                            #         if gt_idx in matched_gt:
+                            #             continue  # 跳过已匹配的真实框
+                            #
+                            #         iou = calculate_iou(pred_box, gt_box)
+                            #         if iou > best_iou:
+                            #             best_iou = iou
+                            #             best_gt_idx = gt_idx
+                            #
+                            #     if best_iou >= iou_threshold:
+                            #         tp += 1
+                            #         matched_gt.add(best_gt_idx)
+                            #     else:
+                            #         fp += 1
+                            #
+                            # # 计算当前图片的指标
+                            # fn = len(gt_boxes) - len(matched_gt)  # 假负例
+                            #
+                            # # 累加到总计数
+                            # total_tp += tp
+                            # total_fp += fp
+                            # total_fn += fn
+                            #
+                            # # 计算单张图片的指标
+                            # precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+                            # recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+                            # f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+                            #
                             # print(
-                            #     f"文件 {basename}: 精确率={precision:.4f}, 召回率={recall:.4f}, F1={f1:.4f}, 框数差距={abs(len(gt_boxes) - len(pred_boxes))}")
+                            #     f"文件 {filename}: 精确率={precision:.4f}, 召回率={recall:.4f}, F1={f1:.4f}, 框数差距={abs(len(gt_boxes) - len(pred_boxes))}")
 
                     # 计算所有图片的汇总指标
-                    total_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
-                    total_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
-                    total_f1 = 2 * total_precision * total_recall / (total_precision + total_recall) if (total_precision + total_recall) > 0 else 0
+                    # total_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+                    # total_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+                    # total_f1 = 2 * total_precision * total_recall / (total_precision + total_recall) if (total_precision + total_recall) > 0 else 0
 
-                    print("\n汇总指标:")
-                    print(f"NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
-                    print(f"总精确率: {total_precision:.4f}")
-                    print(f"总召回率: {total_recall:.4f}")
-                    print(f"总F1分数: {total_f1:.4f}")
-                    print(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}")
-                    print(f"真正例(TP): {total_tp}, 假正例(FP): {total_fp}, 假负例(FN): {total_fn}")
+                    # print("\n汇总指标:")
+                    # print(f"NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
+                    # print(f"总精确率: {total_precision:.4f}")
+                    # print(f"总召回率: {total_recall:.4f}")
+                    # print(f"总F1分数: {total_f1:.4f}")
+                    # print(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}")
+                    # print(f"真正例(TP): {total_tp}, 假正例(FP): {total_fp}, 假负例(FN): {total_fn}")
 
-                    if abs(total_gt_boxes - total_pred_boxes) < min_diff:
-                        min_diff = abs(total_gt_boxes - total_pred_boxes)
-                        cur_nms_threshold = nms_threshold
-                        cur_score_threshold = score_threshold
-                        print(f"当前最小差异: {min_diff}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}")
+                    # if total_diff_counts < min_diff:
+                    #     min_diff = total_diff_counts
+                    #     cur_nms_threshold = nms_threshold
+                    #     cur_score_threshold = score_threshold
+                    # print(f"当前最小总差异: {min_diff}，当前最小平均差距：{min_diff / 15}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}")
+                    #
+                    #
+                    # total_diff_counts_log = os.path.join(output_dir, 'total_diff_counts_log.txt')
+                    # with open(total_diff_counts_log, 'a') as f_diff:
+                    #     f_diff.write(f"nms_threshold: {nms_threshold}, score_threshold: {score_threshold}\n")
+                    #     f_diff.write(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}\n")
+                    #     f_diff.write(f"逐图差距总数：{total_diff_counts}， 平均逐图差距总数: {total_diff_counts / 15}\n")
+                    #     f_diff.write(f"当前最小总差异: {min_diff}，当前最小平均差距：{min_diff / 15}")
+
+
+
+                    # if abs(total_gt_boxes - total_pred_boxes) < min_diff:
+                    #     min_diff = abs(total_gt_boxes - total_pred_boxes)
+                    #     cur_nms_threshold = nms_threshold
+                    #     cur_score_threshold = score_threshold
+                    # print(f"总预测数：{total_pred_boxes}, 实际预测数：{total_gt_boxes}")
+                    # print(f"当前差异: {abs(total_gt_boxes - total_pred_boxes)}，NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}")
+                    # print(f"当前最小差异: {min_diff}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}")
 
                     # 将结果保存为 log 文件
-                    log_path = os.path.join(output_dir, f'results.log')
-                    with open(log_path, 'a') as log_file:
+                    # log_path = os.path.join(output_dir, f'results.log')
+                    # with open(log_path, 'a') as log_file:
                         # log_file.write(f"IOU: {iou_type}, NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
                         # log_file.write("汇总指标:\n")
                         # log_file.write(f"总精确率: {total_precision:.4f}\n")
@@ -614,8 +742,9 @@ if __name__ == '__main__':
                         # log_file.write(f"总F1分数: {total_f1:.4f}\n")
                         # log_file.write(f"总预测框数: {total_pred_boxes}, 总真实框数: {total_gt_boxes}, 差距: {abs(total_gt_boxes - total_pred_boxes)}\n")
                         # log_file.write(f"真正例(TP): {total_tp}, 假正例(FP): {total_fp}, 假负例(FN): {total_fn}\n")
+                        # log_file.write(f"当前差异: {abs(total_gt_boxes - total_pred_boxes)}，NMS阈值: {float(nms_threshold):.2f}, 分数阈值: {float(score_threshold):.2f}\n")
                         # log_file.write(f"当前最小差异: {min_diff}，NMS阈值: {float(cur_nms_threshold):.2f}, 分数阈值: {float(cur_score_threshold):.2f}\n")
-                        log_file.write("-" * 50 + "\n")
+                        # log_file.write("-" * 50 + "\n")
 
 
                     # 保存 COCO 格式的结果
