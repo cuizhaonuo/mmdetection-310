@@ -131,7 +131,8 @@ def detect_quad_via_white(img):
 
     # 基础白色掩码 + 顶帽增强细亮边
     mask_white = cv2.inRange(hsv, (0, 0, v_thr-25), (180, s_thr, 255))
-    k = max(3, int(min(H,W)*0.008))  # 略大一点，连接细白边
+    # k = max(3, int(min(H,W)*0.008))  # 略大一点，连接细白边
+    k = 5
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k|1, k|1))
     top = cv2.morphologyEx(V, cv2.MORPH_TOPHAT, kernel)
     _, mask_top = cv2.threshold(top, 15, 255, cv2.THRESH_BINARY)
@@ -139,6 +140,7 @@ def detect_quad_via_white(img):
 
     mask_thick = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     mask_thick = cv2.dilate(mask_thick, kernel, iterations=1)
+
 
     cnts, _ = cv2.findContours(mask_thick, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     best = None; best_score = -1e9
@@ -152,7 +154,6 @@ def detect_quad_via_white(img):
         sc = score_quad(approx, H, W)
         if sc > best_score:
             best = approx; best_score = sc
-
     return best, mask, mask_thick
 
 # ----------------------- 2) 直线回退（改进） -----------------------
@@ -204,7 +205,7 @@ def detect_quad_via_lines(img):
         n = math.hypot(a,b) + 1e-6
         a,b,c = a/n, b/n, c/n
         # 法向量统一“指向画面外”（远离中心），便于按距离排序
-        s = a*cx + b*cy + c  # 中心点代入：>0表示中心在法向同侧
+        s = a*cx + b*cy + c  # 中心点代入：>0表示中心在法向同侧    
         if s < 0:
             a,b,c = -a,-b,-c
         d = -c  # 到原点距离（归一化），同号可直接比较
@@ -256,6 +257,8 @@ def detect_quad(img):
     debug['mode'] = 'fail'
     return None, debug, 'fail'
 
+
+
 # ----------------------- 4) 处理与可视化 -----------------------
 def process_one(img_path, out_dir, out_side=None, keep_px=60, write_debug=False):
     base = os.path.splitext(os.path.basename(img_path))[0]
@@ -263,6 +266,8 @@ def process_one(img_path, out_dir, out_side=None, keep_px=60, write_debug=False)
     if img is None:
         print(f"[WARN] 读图失败: {img_path}")
         return
+    # img = paint_tag_red(img)
+    # cv2.imwrite(os.path.join(out_dir, "output.jpg"), img)
 
     quad, dbg, mode = detect_quad(img)
     if quad is None:
@@ -278,6 +283,7 @@ def process_one(img_path, out_dir, out_side=None, keep_px=60, write_debug=False)
     cv2.imencode(".jpg", out)[1].tofile(out_path)
 
     if write_debug:
+        # 1. 标记原图
         dbg_img = img.copy()
         q0 = order_corners(quad).astype(int)
         q1 = order_corners(quad_keep).astype(int)
@@ -286,7 +292,23 @@ def process_one(img_path, out_dir, out_side=None, keep_px=60, write_debug=False)
         for p in q0: cv2.circle(dbg_img, tuple(p), 12, (0,255,0), -1)
         for p in q1: cv2.circle(dbg_img, tuple(p), 12, (255,0,0), -1)
 
-        # 左上角拼接调试小图
+        # 保存标记的原图
+        dbg_path = os.path.join(out_dir, f"{base}_debug_marked.jpg")
+        cv2.imencode(".jpg", dbg_img)[1].tofile(dbg_path)
+
+        # 2. 保存各个调试图像
+        if dbg.get('mask_white') is not None:
+            mw_path = os.path.join(out_dir, f"{base}_debug_mask_white.jpg")
+            cv2.imencode(".jpg", dbg['mask_white'])[1].tofile(mw_path)
+
+            mt_path = os.path.join(out_dir, f"{base}_debug_mask_thick.jpg")
+            cv2.imencode(".jpg", dbg['mask_white_thick'])[1].tofile(mt_path)
+
+        if dbg.get('edges') is not None:
+            ed_path = os.path.join(out_dir, f"{base}_debug_edges.jpg")
+            cv2.imencode(".jpg", dbg['edges'])[1].tofile(ed_path)
+
+        # 3. 左上角拼接调试小图（保持原功能）
         tiles = []
         if dbg.get('mask_white') is not None:
             mw = cv2.cvtColor(dbg['mask_white'], cv2.COLOR_GRAY2BGR)
@@ -299,10 +321,16 @@ def process_one(img_path, out_dir, out_side=None, keep_px=60, write_debug=False)
             tiles = [cv2.resize(t, (t.shape[1]//2, t.shape[0]//2)) for t in tiles]
             stack = np.hstack(tiles)
             h, w = stack.shape[:2]
-            dbg_img[0:h, 0:w] = stack
+            dbg_img_combined = img.copy()
+            dbg_img_combined[0:h, 0:w] = stack
+            # 在组合图上也绘制四边形标记
+            cv2.polylines(dbg_img_combined, [q0], True, (0,255,0), 4)
+            cv2.polylines(dbg_img_combined, [q1], True, (255,0,0), 4)
+            for p in q0: cv2.circle(dbg_img_combined, tuple(p), 12, (0,255,0), -1)
+            for p in q1: cv2.circle(dbg_img_combined, tuple(p), 12, (255,0,0), -1)
 
-        dbg_path = os.path.join(out_dir, f"{base}_debug.jpg")
-        cv2.imencode(".jpg", dbg_img)[1].tofile(dbg_path)
+            dbg_path = os.path.join(out_dir, f"{base}_debug_combined.jpg")
+            cv2.imencode(".jpg", dbg_img_combined)[1].tofile(dbg_path)
 
     print(f"[OK:{mode}] {img_path} -> {out_path}")
 
@@ -333,5 +361,19 @@ def main():
         except Exception as e:
             print(f"[ERR] 处理失败 {f}: {e}")
 
+# def create_error_img():
+#     dataset_dir = '/public/home/zncui/datasets/wheat-guo-dataset'
+#     error_square_dir = os.path.join(dataset_dir, 'wheat-guo-square-error')
+#     error_ori_dir = os.path.join(dataset_dir, 'wheat-guo-crop')
+#     target_dir = os.path.join(dataset_dir, 'wheat-guo-square-error/ori')
+#     error_img_name = [f for f in os.listdir(error_square_dir) if is_image(f)]
+#     os.makedirs(target_dir, exist_ok=True)
+#
+#     import shutil
+#     for img_name in error_img_name:
+#         shutil.copy(os.path.join(error_ori_dir, img_name), os.path.join(target_dir, img_name))
+
+
 if __name__ == "__main__":
+    # create_error_img()
     main()

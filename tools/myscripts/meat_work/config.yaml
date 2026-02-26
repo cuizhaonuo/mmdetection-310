@@ -1,0 +1,12 @@
+pattern: 'red_hsv' # 选择使用的图像处理模式, 可选 'red_hsv' 或 'grey_threshold'
+
+# 'red_hsv' pattern configuration
+alpha: 1.8 # 对比度系数, >1 增强对比度, < 1 降低对比度
+beta: -75  # 亮度偏移，正数变亮，负数变暗
+lower_red1: [0, 100, 100] # HSV空间中红色区间
+upper_red1: [10, 255, 255]
+lower_red2: [170, 100, 100]
+upper_red2: [180, 255, 255]
+
+# 'grey_threshold' pattern configuration
+gey_thereshold: [165, 255]

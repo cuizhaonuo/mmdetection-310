@@ -5,6 +5,7 @@ import os, sys, math, time, json, shutil, logging
 from dataclasses import dataclass
 from typing import List, Tuple, Iterable, Optional, Dict, Any
 
+import pandas as pd
 import numpy as np
 import torch, mmcv, cv2
 from tqdm import tqdm
@@ -93,7 +94,7 @@ class RunSave:
     rect_vis: bool = False
     circle_vis: bool = False
     index_vis: bool = False
-
+    normalized_result: bool = False
 
 @dataclass
 class RunMetrics:
@@ -458,6 +459,94 @@ class Exporter:
     def to_coco_placeholder(*args, **kwargs):
         pass  # 预留：把你之前注释的 json.dump 放进来即可
 
+    @staticmethod
+    def normalized_result(img_path: str, bboxes: np.ndarray, out_path: str):
+        """
+        输出每个中心正方形(t=0.50..0.95)的：
+        - _cnt：与该窗有交集的检测框数量 N_t
+        - _den：密度 N_t / area_real(t)  (单位：个/平方米；整图=1 m^2)
+        """
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        img = mmcv.imread(img_path)
+        H, W = img.shape[:2]
+
+        thresholds = [round(x, 2) for x in np.arange(0.50, 0.95 + 1e-9, 0.05)]
+
+        if bboxes is None or len(bboxes) == 0:
+            bboxes = np.zeros((0, 4), dtype=np.float32)
+        else:
+            bboxes = np.asarray(bboxes, dtype=np.float32).reshape(-1, 4)
+
+        side_base = float(min(H, W))
+        cx, cy = W / 2.0, H / 2.0
+
+        def rect_intersects(a, b):
+            x1 = max(a[0], b[0]);
+            y1 = max(a[1], b[1])
+            x2 = min(a[2], b[2]);
+            y2 = min(a[3], b[3])
+            return (x2 - x1) > 0 and (y2 - y1) > 0
+
+        row = {"filename": os.path.basename(img_path), "H": int(H), "W": int(W)}
+
+        for t in thresholds:
+            # 中心正方形（像素）
+            side = t * side_base
+            half = side / 2.0
+            sq = (
+                max(0.0, cx - half),
+                max(0.0, cy - half),
+                min(float(W), cx + half),
+                min(float(H), cy + half),
+            )
+
+            # 实际面积：整图 = 1.0 m^2
+            real_area = (side * side) / (H * W)  # m^2
+
+            # 计数
+            count = 0
+            for box in bboxes:
+                x1, y1, x2, y2 = map(float, box)
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                if rect_intersects((x1, y1, x2, y2), sq):
+                    count += 1
+
+            density = (count / real_area) if real_area > 0 else 0.0
+
+            # 两列同时写入
+            k_cnt = f"{t:.2f}_cnt"
+            k_den = f"{t:.2f}_den"
+            row[k_cnt] = int(count)
+            row[k_den] = float(density)
+
+        df_new = pd.DataFrame([row])
+
+        # 追加或新建 —— 注意把所有 *_cnt 与 *_den 列都纳入列对齐
+        if os.path.exists(out_path):
+            df_old = pd.read_excel(out_path)
+            # 目标列集合（保持 filename,H,W 在最前）
+            metric_cols = []
+            for t in thresholds:
+                metric_cols += [f"{t:.2f}_cnt", f"{t:.2f}_den"]
+            target_cols = ["filename", "H", "W"] + metric_cols
+
+            # 确保旧表包含所有目标列；缺失则填 NaN
+            for c in target_cols:
+                if c not in df_old.columns:
+                    df_old[c] = np.nan
+            # 确保新表也有旧表里非目标的其他列（通常不需要，但为稳妥合并）
+            for c in df_old.columns:
+                if c not in df_new.columns:
+                    df_new[c] = np.nan
+
+            df_out = pd.concat([df_old[target_cols], df_new[target_cols]], ignore_index=True)
+        else:
+            df_out = df_new
+
+        df_out.to_excel(out_path, index=False)
+
 
 class Evaluator:
     @staticmethod
@@ -528,6 +617,10 @@ class Runner:
         if save.index_vis:
             p = os.path.join(out_root, "index", os.path.basename(img_path))
             Exporter.save_index_vis(img, bboxes, p)
+        if save.normalized_result:
+            p = os.path.join(out_root, 'normalized_result.xlsx')
+            Exporter.normalized_result(img_path, bboxes, p)
+
 
     def run_once(self):
         paths = self._collect_images()
