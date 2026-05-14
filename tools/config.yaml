@@ -1,13 +1,13 @@
 model:
   base_dir: /public/home/zncui/pycharm_project/mmdetection
-  config_rel: work_dirs/co_dino_guo_yolo2coco_2/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py
-  checkpoint_rel: work_dirs/co_dino_guo_yolo2coco_2/epoch_16.pth
-  device: cuda:2
+  config_rel: work_dirs/co_dino_guo_result/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py
+  checkpoint_rel: work_dirs/co_dino_guo_result/epoch_16.pth
+  device: cuda:0
 
 data:
   dataset_dir: /public/home/zncui/datasets/wheat-guo-dataset
-  input_rel: wheat-guo-square/
-  output_rel: wheat-guo-square-results/
+  input_rel: 2026/
+  output_rel: 2026-results-run2/
   image_exts: [".jpg", ".jpeg", ".png"]
 
 sliding_window:
@@ -17,9 +17,9 @@ sliding_window:
   filter_to_valid_region: true
 
 nms:
-  score_thr: 0.314
-  nms_iou: 0.556
-  iou_type: IoU_min          # IoU | IoU_min | GIoU | DIoU | CIoU | EIoU
+  score_thr: 0.2
+  nms_iou: 0.6
+  iou_type: IoU          # IoU | IoU_min | GIoU | DIoU | CIoU | EIoU
   use_soft_nms: false
   soft_sigma: 0.5
   soft_score_thr: 0.001
@@ -34,10 +34,10 @@ run:
     index_vis: True
   metrics:
     calc_prf: false
-    label_root_rel: yolo_wheat_big_image_v2split/labels/val
+    label_root_rel: 2026_yolo/labels/test
 
   # 仅当 mode=grid 时生效
   grid:
-    nms_range: [0.2, 0.6, 1]     # start, stop, num
-    score_range: [0.2, 0.6, 2]    # start, stop, num
-    iou_types: ["IoU_min"]
+    nms_range: [0.2, 0.6, 8]     # start, stop, num
+    score_range: [0.2, 0.6, 8]    # start, stop, num
+    iou_types: ["IoU_min", "IoU"]

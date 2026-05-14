@@ -441,7 +441,7 @@ class Exporter:
         draw = img.copy()
         for x1, y1, x2, y2 in bboxes:
             cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
-            cv2.circle(draw, (cx, cy), 5, (255, 0, 0), -1, lineType=cv2.LINE_AA)
+            cv2.circle(draw, (cx, cy), 2, (255, 0, 0), -1, lineType=cv2.LINE_AA)
         cv2.imwrite(out_path, cv2.cvtColor(draw, cv2.COLOR_RGB2BGR))
 
     @staticmethod
