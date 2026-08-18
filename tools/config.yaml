@@ -5,9 +5,10 @@ model:
   device: cuda:1
 
 data:
-  dataset_dir: /public/home/zncui/datasets/wheat-guo-dataset
-  input_rel: CZ师兄小区
-  output_rel: CZ师兄小区-results-run/
+  dataset_dir: /public/home/zncui/datasets/wheat50/wheat-8-17
+  # 绝对路径：os.path.join(dataset_dir, input_rel) 直接取绝对路径本身
+  input_rel: /public/lab_share/nfs_data/raw_data/wheat/2025/guoweilong/SN2026/crop/test_100
+  output_rel: test_100_zncui
   image_exts: [".jpg", ".jpeg", ".png"]
 
 sliding_window:
