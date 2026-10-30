@@ -60,12 +60,11 @@ HEADER_H       = 30          # contact sheet 表头高度
 # 颜色 (BGR)
 C_MATCH   = (0, 255, 0)      # 绿: 匹配上
 C_A_ONLY  = (255, 0, 0)      # 蓝: A(分割)独有
-C_B_SPIKE = (0, 0, 255)      # 红: B独有, 落在穗上
-C_B_BLOB  = (255, 0, 255)    # 品红: B独有, 落在大块(土壤/叶层)
-C_B_PAD   = (255, 255, 255)  # 白: B独有, 落在小区外填充区
+C_B_ONLY  = (0, 0, 255)      # 红: B独有
 C_BOX     = (0, 255, 255)    # 黄: 检测框
 
-CAT_COLOR = {"spike": C_B_SPIKE, "big_blob": C_B_BLOB, "padding": C_B_PAD}
+# 只用上面三种颜色。B独有的落点类别(穗/大块/填充区)不再用颜色区分,
+# 只写在小图字幕和明细 CSV 的 b_center_category 列里。
 CAT_ABBR  = {"spike": "spk", "big_blob": "blb", "padding": "pad"}
 CAT_ORDER = {"big_blob": 0, "padding": 1, "spike": 2}   # sheet 内排序: 失效模式聚在前面
 
@@ -237,7 +236,7 @@ def draw_overlay(img, A, B, pairs, a_only, b_only, b_cats, dists, stat, draw_box
 
     for bi in b_only:
         bx, by = B[bi]
-        cv2.circle(vis, (int(round(bx)), int(round(by))), 10, CAT_COLOR[b_cats[bi]], -1, cv2.LINE_AA)
+        cv2.circle(vis, (int(round(bx)), int(round(by))), 10, C_B_ONLY, -1, cv2.LINE_AA)
 
     # 图例。注意: cv2.putText 的 Hershey 字体只有 ASCII, 中文会渲染成 ?, 所以这里只能用英文。
     lines = [
@@ -245,7 +244,7 @@ def draw_overlay(img, A, B, pairs, a_only, b_only, b_cats, dists, stat, draw_box
         ("A-only=%d (outside-mask %d)" % (stat["n_A_only"], stat["n_A_only_centroid_outside"]), C_A_ONLY),
         ("B-only=%d  spike=%d blob=%d pad=%d" % (
             stat["n_B_only"], stat["n_B_only_on_spike"],
-            stat["n_B_only_on_blob"], stat["n_B_only_on_padding"]), C_B_SPIKE),
+            stat["n_B_only_on_blob"], stat["n_B_only_on_padding"]), C_B_ONLY),
         ("dist p50=%s p90=%s max=%s" % (stat["dist_median"], stat["dist_p90"], stat["dist_max"]), (200, 200, 200)),
     ]
     font, fs, ft = cv2.FONT_HERSHEY_SIMPLEX, 1.6, 3
@@ -412,7 +411,7 @@ def process_one(stem, args, paths, all_dists):
             thumb_a[int(i)] = (name, cell)
         # B 独有: 按 大块 -> 填充区 -> 穗 排序, 让失效模式聚在一起
         b_sorted = sorted(b_only, key=lambda i: (CAT_ORDER[b_cat_of[int(i)]], int(i)))
-        b_items = [(B[i][0], B[i][1], CAT_COLOR[b_cat_of[int(i)]],
+        b_items = [(B[i][0], B[i][1], C_B_ONLY,
                     "#%d b%d %s" % (k, int(i), CAT_ABBR[b_cat_of[int(i)]]))
                    for k, i in enumerate(b_sorted)]
         for (name, cell), i in zip(
