@@ -121,5 +121,5 @@ mmdet/.mim
 *.pth
 *.py~
 *.sh~
-
 work_dirs/
+*.pt

@@ -1,44 +1,44 @@
 model:
-  base_dir: /public/home/zncui/pycharm_project/mmdetection
+  base_dir: /public/home/zncui/pycharm_project/mmdetection-310
   config_rel: work_dirs/co_dino_guo_result/co_dino_5scale_swin_l_16xb1_16e_o365tococo.py
   checkpoint_rel: work_dirs/co_dino_guo_result/epoch_16.pth
-  device: cuda:2
+  device: cuda:1
 
 data:
-  dataset_dir: /public/home/zncui/datasets/wheat-guo-dataset
-  input_rel: yolo_wheat_big_image/images/val
-  output_rel: wheats_rle_yolo_val-time-9-26-16-50
+  dataset_dir: /public/home/zncui/datasets/wheat50/wheat-8-17
+  # 绝对路径：os.path.join(dataset_dir, input_rel) 直接取绝对路径本身
+  input_rel: /public/lab_share/nfs_data/raw_data/wheat/2025/guoweilong/SN2026/crop/test_100
+  output_rel: test_100_zncui
   image_exts: [".jpg", ".jpeg", ".png"]
 
 sliding_window:
-  window_size: 800
+  window_size: 1024
   overlap_ratio: 0.15
   pad_value: [114, 114, 114]
   filter_to_valid_region: true
 
 nms:
-  score_thr: 0.314
-  nms_iou: 0.556
+  score_thr: 0.3
+  nms_iou: 0.35
   iou_type: IoU_min          # IoU | IoU_min | GIoU | DIoU | CIoU | EIoU
   use_soft_nms: false
   soft_sigma: 0.5
   soft_score_thr: 0.001
 
 run:
-  mode: grid                 # run | grid
+  mode: run                 # run | grid
   save:
-    ori: True
-    txt: True
+    ori: true
+    txt: true
     rect_vis: True
     circle_vis: True
     index_vis: True
-    normalized_result: True
   metrics:
-    calc_prf: True
-    label_root_rel: yolo_wheat_big_image/labels/val
+    calc_prf: false
+    label_root_rel: 2026_yolo/labels/test
 
   # 仅当 mode=grid 时生效
   grid:
-    nms_range: [0.3, 0.7, 10]     # start, stop, num
-    score_range: [0.3, 0.7, 5]    # start, stop, num
-    iou_types: ["IoU_min"]
+    nms_range: [0.2, 0.6, 8]     # start, stop, num
+    score_range: [0.2, 0.6, 8]    # start, stop, num
+    iou_types: ["IoU_min", "IoU"]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, sys, math, time, json, shutil, logging
+import os, sys, csv, math, time, json, shutil, logging
 from dataclasses import dataclass
 from typing import List, Tuple, Iterable, Optional, Dict, Any
 
@@ -442,7 +442,7 @@ class Exporter:
         draw = img.copy()
         for x1, y1, x2, y2 in bboxes:
             cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
-            cv2.circle(draw, (cx, cy), 5, (255, 0, 0), -1, lineType=cv2.LINE_AA)
+            cv2.circle(draw, (cx, cy), 2, (255, 0, 0), -1, lineType=cv2.LINE_AA)
         cv2.imwrite(out_path, cv2.cvtColor(draw, cv2.COLOR_RGB2BGR))
 
     @staticmethod
@@ -628,12 +628,23 @@ class Runner:
             logger.warning("未发现图像。"); return
         logger.info(f"开始处理 {len(paths)} 张图片 ...")
         t0 = time.time()
+        counts: List[Tuple[str, int]] = []
         for p in tqdm(paths, desc="Processing"):
             img = mmcv.imread(p, channel_order='rgb')
             result = self.tiler.infer_image(self.det, img, self.cfg.nms)
             inst = result.pred_instances
             bboxes = inst.bboxes.cpu().numpy() if len(inst) else np.zeros((0,4))
             self._save_all(p, img, result, bboxes)
+            counts.append((os.path.basename(p), len(bboxes)))
+
+        # 输出预测计数 CSV：文件名, 预测数量
+        csv_path = os.path.join(self.cfg.data.output_dir, "counts.csv")
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["filename", "count"])
+            w.writerows(counts)
+            w.writerow(["TOTAL", sum(c for _, c in counts)])
+        logger.info(f"计数 CSV 已保存: {csv_path}")
         logger.info(f"完成，用时 {time.time()-t0:.2f}s")
 
     def _load_yolo_abs(self, label_file: str, W: int, H: int) -> List[List[float]]:
